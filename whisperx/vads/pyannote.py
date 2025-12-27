@@ -18,6 +18,34 @@ from whisperx.log_utils import get_logger
 logger = get_logger(__name__)
 
 
+def _get_pyannote_auth_kwargs(use_auth_token):
+    """
+    Return authentication kwargs compatible with both pyannote-audio 3.x and 4.x.
+
+    pyannote-audio 4.0 renamed the authentication parameter:
+    - 3.x: use_auth_token=...
+    - 4.x: token=...
+
+    This helper enables backward compatibility by checking the installed version.
+    """
+    if use_auth_token is None:
+        return {}
+
+    try:
+        import pyannote.audio
+        from packaging.version import Version
+        pyannote_version = Version(pyannote.audio.__version__)
+        if pyannote_version >= Version("4.0.0"):
+            return {"token": use_auth_token}
+    except Exception:
+        # If we can't determine version, try the new API first
+        # (it's the future-proof choice)
+        pass
+
+    # Default to old API for backward compatibility
+    return {"use_auth_token": use_auth_token}
+
+
 def load_vad_model(device, vad_onset=0.500, vad_offset=0.363, use_auth_token=None, model_fp=None):
     model_dir = torch.hub._get_torch_home()
 
@@ -40,7 +68,7 @@ def load_vad_model(device, vad_onset=0.500, vad_offset=0.363, use_auth_token=Non
 
     model_bytes = open(model_fp, "rb").read()
 
-    vad_model = Model.from_pretrained(model_fp, use_auth_token=use_auth_token)
+    vad_model = Model.from_pretrained(model_fp, **_get_pyannote_auth_kwargs(use_auth_token))
     hyperparameters = {"onset": vad_onset,
                     "offset": vad_offset,
                     "min_duration_on": 0.1,
@@ -196,7 +224,7 @@ class VoiceActivitySegmentation(VoiceActivityDetection):
             **inference_kwargs,
     ):
 
-        super().__init__(segmentation=segmentation, fscore=fscore, use_auth_token=use_auth_token, **inference_kwargs)
+        super().__init__(segmentation=segmentation, fscore=fscore, **_get_pyannote_auth_kwargs(use_auth_token), **inference_kwargs)
 
     def apply(self, file: AudioFile, hook: Optional[Callable] = None) -> Annotation:
         """Apply voice activity detection
