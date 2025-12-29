@@ -386,6 +386,12 @@ def load_model(
             from whisperx.backends.mlx_backend import MLXWhisperModel
 
             logger.info(f"Using MLX backend for model: {whisper_arch}")
+            # MLX backend currently only supports batch_size=1
+            # Warn users if they specified a larger batch size
+            if asr_options and asr_options.get("batch_size", 1) > 1:
+                logger.warning(
+                    "MLX backend only supports batch_size=1, batch processing will use sequential segments"
+                )
             model = MLXWhisperModel(
                 whisper_arch,
                 device=device,

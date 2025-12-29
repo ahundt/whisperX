@@ -1,6 +1,7 @@
 '''MLX backend for Apple Silicon acceleration.'''
 from __future__ import annotations
 
+import logging
 from typing import TYPE_CHECKING, List, Optional
 
 import numpy as np
@@ -8,6 +9,8 @@ import numpy as np
 if TYPE_CHECKING:
     from faster_whisper.tokenizer import Tokenizer
     from faster_whisper.transcribe import TranscriptionOptions
+
+logger = logging.getLogger("whisperx")
 
 MODEL_REPOS = {
     'tiny': 'mlx-community/whisper-tiny',
@@ -50,6 +53,22 @@ class MLXWhisperModel:
     ):
         from transformers import WhisperTokenizer
 
+        # Log warnings for parameters that are accepted but ignored by MLX backend
+        if compute_type != 'float16':
+            logger.info(
+                "MLX backend uses native precision; compute_type='%s' is ignored",
+                compute_type,
+            )
+        if device_index != 0:
+            logger.warning(
+                "MLX backend only supports single device; device_index=%d is ignored",
+                device_index,
+            )
+        if download_root is not None:
+            logger.info(
+                "MLX backend uses HuggingFace Hub caching; download_root is ignored"
+            )
+
         self._repo = MODEL_REPOS.get(model_size_or_path, model_size_or_path)
         is_multilingual = not model_size_or_path.endswith('.en')
 
@@ -89,12 +108,20 @@ class MLXWhisperModel:
         if self._pending_audio is None:
             raise RuntimeError('Audio not set - call set_audio_for_batch() first')
 
+        # Build initial_prompt, injecting hotwords if provided
+        # mlx_whisper doesn't have a dedicated hotwords parameter, so we prepend
+        # them to the initial_prompt to bias the model toward recognizing them
+        prompt = options.initial_prompt if options else None
+        if options and options.hotwords:
+            hotwords_hint = f"Vocabulary: {options.hotwords}"
+            prompt = f"{hotwords_hint}. {prompt}" if prompt else hotwords_hint
+
         result = mlx_whisper.transcribe(
             self._pending_audio,
             path_or_hf_repo=self._repo,
             language=self._pending_language
             or (tokenizer.language_code if tokenizer else None),
-            initial_prompt=options.initial_prompt if options else None,
+            initial_prompt=prompt,
             word_timestamps=False,
             condition_on_previous_text=options.condition_on_previous_text
             if options
