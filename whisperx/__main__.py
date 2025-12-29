@@ -9,6 +9,15 @@ from whisperx.utils import (LANGUAGES, TO_LANGUAGE_CODE, optional_float,
 from whisperx.log_utils import setup_logging
 
 
+def _default_device():
+    """Get default device with Apple Silicon MLX support."""
+    from whisperx.asr import _should_use_mlx
+
+    if _should_use_mlx("auto"):
+        return "mlx"
+    return "cuda" if torch.cuda.is_available() else "cpu"
+
+
 def cli():
     # fmt: off
     parser = argparse.ArgumentParser(formatter_class=argparse.ArgumentDefaultsHelpFormatter)
@@ -16,7 +25,7 @@ def cli():
     parser.add_argument("--model", default="small", help="name of the Whisper model to use")
     parser.add_argument("--model_cache_only", type=str2bool, default=False, help="If True, will not attempt to download models, instead using cached models from --model_dir")
     parser.add_argument("--model_dir", type=str, default=None, help="the path to save model files; uses ~/.cache/whisper by default")
-    parser.add_argument("--device", default="cuda" if torch.cuda.is_available() else "cpu", help="device to use for PyTorch inference")
+    parser.add_argument("--device", default=_default_device(), help="device to use for inference (cuda, cpu, mlx)")
     parser.add_argument("--device_index", default=0, type=int, help="device index to use for FasterWhisper inference")
     parser.add_argument("--batch_size", default=8, type=int, help="the preferred batch size for inference")
     parser.add_argument("--compute_type", default="float16", type=str, choices=["float16", "float32", "int8"], help="compute type for computation")

@@ -18,6 +18,23 @@ from whisperx.log_utils import get_logger
 
 logger = get_logger(__name__)
 
+import platform as _platform
+
+
+def _should_use_mlx(device: str) -> bool:
+    '''Check if MLX backend should be used.'''
+    if device not in ("mlx", "mps", "auto"):
+        return False
+    if _platform.system() != "Darwin" or _platform.machine() != "arm64":
+        return False
+    try:
+        import mlx_whisper  # noqa: F401
+
+        return True
+    except ImportError:
+        logger.debug("mlx-whisper not installed, using ctranslate2")
+        return False
+
 
 def find_numeral_symbol_tokens(tokenizer):
     numeral_symbol_tokens = []
@@ -152,16 +169,25 @@ class FasterWhisperPipeline(Pipeline):
         return preprocess_kwargs, {}, {}
 
     def preprocess(self, audio):
-        audio = audio['inputs']
+        audio_input = audio['inputs']
         model_n_mels = self.model.feat_kwargs.get("feature_size")
         features = log_mel_spectrogram(
-            audio,
+            audio_input,
             n_mels=model_n_mels if model_n_mels is not None else 80,
-            padding=N_SAMPLES - audio.shape[0],
+            padding=N_SAMPLES - audio_input.shape[0],
         )
-        return {'inputs': features}
+        # Pass audio through for MLX backend (ignored by ctranslate2)
+        return {'inputs': features, '_audio': audio_input}
 
     def _forward(self, model_inputs):
+        # Pass audio for MLX backend, mel features for ctranslate2
+        audio = model_inputs.get('_audio')
+        if audio is not None and hasattr(self.model, 'set_audio_for_batch'):
+            self.model.set_audio_for_batch(
+                audio,
+                self.preset_language,
+                self.tokenizer.task if self.tokenizer else "transcribe",
+            )
         outputs = self.model.generate_segment_batched(model_inputs['inputs'], self.tokenizer, self.options)
         return {'text': outputs}
 
@@ -183,7 +209,11 @@ class FasterWhisperPipeline(Pipeline):
         # TODO hack by collating feature_extractor and image_processor
 
         def stack(items):
-            return {'inputs': torch.stack([x['inputs'] for x in items])}
+            result = {'inputs': torch.stack([x['inputs'] for x in items])}
+            # Preserve audio for MLX (only works with batch_size=1 for now)
+            if '_audio' in items[0]:
+                result['_audio'] = items[0]['_audio']  # Single audio for batch
+            return result
         dataloader = torch.utils.data.DataLoader(dataset, num_workers=num_workers, batch_size=batch_size, collate_fn=stack)
         model_iterator = PipelineIterator(dataloader, self.forward, forward_params, loader_batch_size=batch_size)
         final_iterator = PipelineIterator(model_iterator, self.postprocess, postprocess_params)
@@ -287,6 +317,19 @@ class FasterWhisperPipeline(Pipeline):
         return {"segments": segments, "language": language}
 
     def detect_language(self, audio: np.ndarray) -> str:
+        # MLX handles language detection internally via transcribe
+        if hasattr(self.model, '_repo'):
+            import mlx_whisper
+
+            result = mlx_whisper.transcribe(
+                audio[:N_SAMPLES],  # First 30s
+                path_or_hf_repo=self.model._repo,
+                language=None,  # Force detection
+            )
+            language = result.get("language", "en")
+            logger.info(f"MLX detected language: {language} in first 30s of audio")
+            return language
+
         if audio.shape[0] < N_SAMPLES:
             logger.warning("Audio is shorter than 30s, language detection may be inaccurate")
         model_n_mels = self.model.feat_kwargs.get("feature_size")
@@ -337,13 +380,31 @@ def load_model(
     if whisper_arch.endswith(".en"):
         language = "en"
 
-    model = model or WhisperModel(whisper_arch,
-                         device=device,
-                         device_index=device_index,
-                         compute_type=compute_type,
-                         download_root=download_root,
-                         local_files_only=local_files_only,
-                         cpu_threads=threads)
+    # Select model backend: MLX for Apple Silicon, ctranslate2 otherwise
+    if model is None:
+        if _should_use_mlx(device):
+            from whisperx.backends.mlx_backend import MLXWhisperModel
+
+            logger.info(f"Using MLX backend for model: {whisper_arch}")
+            model = MLXWhisperModel(
+                whisper_arch,
+                device=device,
+                device_index=device_index,
+                compute_type=compute_type,
+                download_root=download_root,
+                local_files_only=local_files_only,
+                cpu_threads=threads,
+            )
+        else:
+            model = WhisperModel(
+                whisper_arch,
+                device=device,
+                device_index=device_index,
+                compute_type=compute_type,
+                download_root=download_root,
+                local_files_only=local_files_only,
+                cpu_threads=threads,
+            )
     if language is not None:
         tokenizer = Tokenizer(model.hf_tokenizer, model.model.is_multilingual, task=task, language=language)
     else:
@@ -407,6 +468,8 @@ def load_model(
         elif vad_method == "pyannote":
             if device == 'cuda':
                 device_vad = f'cuda:{device_index}'
+            elif device in ('mlx', 'mps'):
+                device_vad = 'cpu'  # VAD runs on CPU, model on MLX
             else:
                 device_vad = device
             vad_model = Pyannote(torch.device(device_vad), use_auth_token=None, **default_vad_options)

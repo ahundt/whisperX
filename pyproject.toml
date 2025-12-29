@@ -25,6 +25,8 @@ dependencies = [
     "triton>=3.3.0; sys_platform == 'linux' and platform_machine == 'x86_64'" # only install triton on x86_64 Linux
 ]
 
+[project.optional-dependencies]
+mlx = ["mlx-whisper>=0.4.0"]
 
 [project.scripts]
 whisperx = "whisperx.__main__:cli"
