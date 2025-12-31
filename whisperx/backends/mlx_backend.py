@@ -53,21 +53,12 @@ class MLXWhisperModel:
     ):
         from transformers import WhisperTokenizer
 
-        # Log warnings for parameters that are accepted but ignored by MLX backend
         if compute_type != 'float16':
-            logger.info(
-                "MLX backend uses native precision; compute_type='%s' is ignored",
-                compute_type,
-            )
+            logger.debug("MLX ignores compute_type=%s", compute_type)
         if device_index != 0:
-            logger.warning(
-                "MLX backend only supports single device; device_index=%d is ignored",
-                device_index,
-            )
+            logger.debug("MLX ignores device_index=%d", device_index)
         if download_root is not None:
-            logger.info(
-                "MLX backend uses HuggingFace Hub caching; download_root is ignored"
-            )
+            logger.debug("MLX ignores download_root")
 
         self._repo = MODEL_REPOS.get(model_size_or_path, model_size_or_path)
         is_multilingual = not model_size_or_path.endswith('.en')
@@ -108,13 +99,10 @@ class MLXWhisperModel:
         if self._pending_audio is None:
             raise RuntimeError('Audio not set - call set_audio_for_batch() first')
 
-        # Build initial_prompt, injecting hotwords if provided
-        # mlx_whisper doesn't have a dedicated hotwords parameter, so we prepend
-        # them to the initial_prompt to bias the model toward recognizing them
+        # Inject hotwords into prompt (mlx_whisper has no hotwords param)
         prompt = options.initial_prompt if options else None
         if options and options.hotwords:
-            hotwords_hint = f"Vocabulary: {options.hotwords}"
-            prompt = f"{hotwords_hint}. {prompt}" if prompt else hotwords_hint
+            prompt = f"Vocabulary: {options.hotwords}. {prompt}" if prompt else f"Vocabulary: {options.hotwords}"
 
         result = mlx_whisper.transcribe(
             self._pending_audio,
