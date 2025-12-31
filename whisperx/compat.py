@@ -8,10 +8,10 @@ def get_pyannote_auth_kwargs(use_auth_token):
 
     try:
         import pyannote.audio
-        from packaging.version import Version
-        if Version(pyannote.audio.__version__) >= Version("4.0.0"):
+        major = int(pyannote.audio.__version__.split('.')[0])
+        if major >= 4:
             return {"token": use_auth_token}
-    except (AttributeError, ImportError):
+    except (AttributeError, ValueError):
         pass
 
     return {"use_auth_token": use_auth_token}
