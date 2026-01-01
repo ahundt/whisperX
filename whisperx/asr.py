@@ -465,7 +465,7 @@ def load_model(
             if device == 'cuda':
                 device_vad = f'cuda:{device_index}'
             elif device in ('mlx', 'mps'):
-                device_vad = 'cpu'
+                device_vad = 'mps'
             else:
                 device_vad = device
             vad_model = Pyannote(torch.device(device_vad), use_auth_token=None, **default_vad_options)

@@ -20,8 +20,8 @@ class DiarizationPipeline:
         device: Optional[Union[str, torch.device]] = "cpu",
     ):
         if isinstance(device, str):
-            if device in ('mlx', 'mps'):
-                device = torch.device('cpu')
+            if device == 'mlx':
+                device = torch.device('mps')
             else:
                 device = torch.device(device)
         model_config = model_name or "pyannote/speaker-diarization-3.1"

@@ -78,8 +78,8 @@ DEFAULT_ALIGN_MODELS_HF = {
 
 
 def load_align_model(language_code: str, device: str, model_name: Optional[str] = None, model_dir=None):
-    if device in ('mlx', 'mps'):
-        device = 'cpu'
+    if device == 'mlx':
+        device = 'mps'
 
     if model_name is None:
         # use default model
