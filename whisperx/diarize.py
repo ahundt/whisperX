@@ -20,7 +20,10 @@ class DiarizationPipeline:
         device: Optional[Union[str, torch.device]] = "cpu",
     ):
         if isinstance(device, str):
-            device = torch.device(device)
+            if device in ('mlx', 'mps'):
+                device = torch.device('cpu')
+            else:
+                device = torch.device(device)
         model_config = model_name or "pyannote/speaker-diarization-3.1"
         logger.info(f"Loading diarization model: {model_config}")
         self.model = Pipeline.from_pretrained(model_config, **get_pyannote_auth_kwargs(use_auth_token)).to(device)
